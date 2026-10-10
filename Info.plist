@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>local.app-volume</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>프로그램별 볼륨 조절을 위해 해당 프로그램의 소리를 잡는다</string>
+</dict>
+</plist>
