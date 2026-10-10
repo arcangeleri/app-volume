@@ -1,5 +1,6 @@
 import AppKit
 import CoreAudio
+import ServiceManagement
 
 // 메뉴바 앱 믹서: 지금 소리를 내는 프로세스를 앱 단위 슬라이더로 보여 주고,
 // 100% 미만으로 내린 앱에만 프로세스 탭을 걸어 볼륨을 곱해 기본 출력 장치로 다시 낸다.
@@ -335,8 +336,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let login = NSMenuItem(title: "로그인할 때 자동 실행", action: #selector(toggleLogin), keyEquivalent: "")
+        login.target = self
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(login)
         menu.addItem(NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
+
+    @objc func toggleLogin() {
+        setLogin(SMAppService.mainApp.status != .enabled)
+    }
+}
+
+// 로그인 항목 등록·해제. 앱 폴더 안의 실행 파일로 불러야 동작한다.
+func setLogin(_ enabled: Bool) {
+    do {
+        if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+    } catch {
+        print("로그인 항목 변경 실패: \(error)")
+    }
+}
+
+// 확인용: 로그인 항목을 바꾸거나 상태를 출력하고 끝낸다
+if let index = CommandLine.arguments.firstIndex(of: "--login") {
+    let value = CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "status"
+    if value == "on" { setLogin(true) }
+    if value == "off" { setLogin(false) }
+    print("로그인 항목 상태: \(SMAppService.mainApp.status.rawValue) (0 미등록, 1 등록됨, 2 승인 필요, 3 찾을 수 없음)")
+    exit(0)
 }
 
 // 확인용: 목록만 출력하고 끝낸다

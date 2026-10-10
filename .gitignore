@@ -1,4 +1,5 @@
 mixer
+app-volume.app
 tap
 *.log
 *.pid

@@ -4,6 +4,20 @@
 <dict>
     <key>CFBundleIdentifier</key>
     <string>local.app-volume</string>
+    <key>CFBundleName</key>
+    <string>app-volume</string>
+    <key>CFBundleExecutable</key>
+    <string>mixer</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <key>LSUIElement</key>
+    <true/>
     <key>NSAudioCaptureUsageDescription</key>
     <string>프로그램별 볼륨 조절을 위해 해당 프로그램의 소리를 잡는다</string>
 </dict>
