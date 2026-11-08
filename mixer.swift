@@ -300,10 +300,18 @@ final class RowView: NSView {
         percent.stringValue = mixer.muted.contains(key) ? "음소거" : "\(Int(mixer.gain(key) * 100))%"
     }
 
+    // 한 줄을 조작해도 refresh 가 다른 앱의 탭 재시도 결과를 바꿀 수 있어 열린 메뉴의 모든 줄을 갱신한다
+    func updateAllRows() {
+        for item in enclosingMenuItem?.menu?.items ?? [] {
+            (item.view as? RowView)?.updatePercent()
+        }
+    }
+
     @objc func muteToggled() {
         mixer.setMuted(key, muteButton.state == .on)
         slider.floatValue = muteButton.state == .on ? 0 : mixer.gain(key)
         updatePercent()
+        updateAllRows()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -312,6 +320,7 @@ final class RowView: NSView {
         mixer.setGain(key, slider.floatValue)
         muteButton.state = .off
         updatePercent()
+        updateAllRows()
     }
 }
 
