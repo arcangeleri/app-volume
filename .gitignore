@@ -3,3 +3,4 @@ app-volume.app
 tap
 *.log
 *.pid
+.DS_Store

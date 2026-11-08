@@ -23,7 +23,7 @@ struct AudioProcess {
     let isOutputting: Bool
 }
 
-// 앱 이름으로 묶는 키. 크롬 같은 도우미 프로세스는 본체 번들 이름으로 합친다.
+// 앱 단위로 묶는 키(번들 ID). 볼륨도 이 키로 저장한다. 크롬 같은 도우미 프로세스는 본체 번들 ID 로 합친다.
 func appKey(bundleID: String, pid: Int32) -> String {
     if bundleID.isEmpty {
         return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "pid-\(pid)"
@@ -81,17 +81,20 @@ final class Tap {
         let description = CATapDescription(stereoMixdownOfProcesses: [processObject])
         description.uuid = UUID()
         description.muteBehavior = .muted
-        guard AudioHardwareCreateProcessTap(description, &tapID) == noErr else {
-            print("탭 만들기 실패")
+        // 메뉴바 앱이라 print 는 보이지 않는다. 실패 원인은 NSLog 로 남겨 콘솔 앱에서 찾게 한다.
+        let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
+        guard tapStatus == noErr else {
+            NSLog("app-volume: 탭 만들기 실패 (코드 %d)", tapStatus)
             return nil
         }
 
+        // 효과음용 장치(DefaultSystemOutputDevice)가 아니라 소리 설정의 기본 출력 장치로 낸다
         var outputDevice = AudioObjectID(kAudioObjectUnknown)
         var uidRef: Unmanaged<CFString>?
-        guard audioProperty(systemObject, kAudioHardwarePropertyDefaultSystemOutputDevice, &outputDevice),
+        guard audioProperty(systemObject, kAudioHardwarePropertyDefaultOutputDevice, &outputDevice),
               audioProperty(outputDevice, kAudioDevicePropertyDeviceUID, &uidRef),
               let uid = uidRef?.takeRetainedValue() as String? else {
-            print("출력 장치 얻기 실패")
+            NSLog("app-volume: 출력 장치 얻기 실패")
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
@@ -109,8 +112,9 @@ final class Tap {
                 kAudioSubTapUIDKey: description.uuid.uuidString,
             ]],
         ]
-        guard AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID) == noErr else {
-            print("집합 장치 만들기 실패")
+        let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID)
+        guard aggregateStatus == noErr else {
+            NSLog("app-volume: 집합 장치 만들기 실패 (코드 %d)", aggregateStatus)
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
@@ -130,8 +134,9 @@ final class Tap {
                 }
             }
         }
-        guard status == noErr, AudioDeviceStart(aggregateID, procID) == noErr else {
-            print("재생 시작 실패")
+        let startStatus = status == noErr ? AudioDeviceStart(aggregateID, procID) : status
+        guard startStatus == noErr else {
+            NSLog("app-volume: 재생 시작 실패 (코드 %d)", startStatus)
             stop()
             return nil
         }
@@ -161,23 +166,45 @@ final class Mixer {
 
     var muted: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "muted") ?? [])
 
+    // 탭을 못 만든 프로세스와 실패한 시각. 1초마다 만들고 부수기를 반복하지 않도록 10초 뒤에 다시 시도한다.
+    var failedAt: [AudioObjectID: Date] = [:]
+    let retryInterval: TimeInterval = 10
+
     func gain(_ key: String) -> Float { gains[key] ?? 1 }
 
     // 실제로 곱하는 값. 음소거면 슬라이더 값과 상관없이 0
     func effectiveGain(_ key: String) -> Float { muted.contains(key) ? 0 : gain(key) }
 
+    // 이 앱의 프로세스 중 탭을 못 만들어 볼륨이 적용되지 않은 것이 있는지
+    func hasFailure(_ key: String) -> Bool {
+        processes.contains { $0.key == key && failedAt[$0.object] != nil }
+    }
+
     func setGain(_ key: String, _ value: Float) {
         gains[key] = value >= 0.98 ? 1 : value
         muted.remove(key)
-        UserDefaults.standard.set(gains, forKey: "gains")
-        UserDefaults.standard.set(Array(muted), forKey: "muted")
+        persist()
+        retryNow(key)
         refresh()
     }
 
     func setMuted(_ key: String, _ value: Bool) {
         if value { muted.insert(key) } else { muted.remove(key) }
-        UserDefaults.standard.set(Array(muted), forKey: "muted")
+        persist()
+        retryNow(key)
         refresh()
+    }
+
+    func persist() {
+        UserDefaults.standard.set(gains, forKey: "gains")
+        UserDefaults.standard.set(Array(muted), forKey: "muted")
+    }
+
+    // 사용자가 직접 조절하면 기다리지 않고 바로 다시 시도한다
+    func retryNow(_ key: String) {
+        for process in processes where process.key == key {
+            failedAt[process.object] = nil
+        }
     }
 
     func refresh() {
@@ -187,17 +214,28 @@ final class Mixer {
             tap.stop()
             taps[object] = nil
         }
+        for object in failedAt.keys where !alive.contains(object) {
+            failedAt[object] = nil
+        }
         for process in processes {
             let gain = effectiveGain(process.key)
             if gain < 1 {
                 if let tap = taps[process.object] {
                     tap.gain = gain
+                } else if let failed = failedAt[process.object], Date().timeIntervalSince(failed) < retryInterval {
+                    continue
+                } else if let tap = Tap(processObject: process.object, gain: gain) {
+                    taps[process.object] = tap
+                    failedAt[process.object] = nil
                 } else {
-                    taps[process.object] = Tap(processObject: process.object, gain: gain)
+                    failedAt[process.object] = Date()
                 }
-            } else if let tap = taps[process.object] {
-                tap.stop()
-                taps[process.object] = nil
+            } else {
+                if let tap = taps[process.object] {
+                    tap.stop()
+                    taps[process.object] = nil
+                }
+                failedAt[process.object] = nil
             }
         }
     }
@@ -250,6 +288,15 @@ final class RowView: NSView {
     }
 
     func updatePercent() {
+        // 탭을 못 만들면 슬라이더 값과 달리 소리가 그대로 나므로 실패를 먼저 보여 준다
+        if mixer.hasFailure(key) {
+            percent.stringValue = "실패"
+            percent.textColor = .systemRed
+            percent.toolTip = "볼륨을 적용하지 못했다. 오디오 캡처 권한을 확인한다. 10초마다 다시 시도한다."
+            return
+        }
+        percent.textColor = .labelColor
+        percent.toolTip = nil
         percent.stringValue = mixer.muted.contains(key) ? "음소거" : "\(Int(mixer.gain(key) * 100))%"
     }
 
@@ -308,6 +355,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         AudioObjectAddPropertyListenerBlock(systemObject, &listAddress, DispatchQueue.main) { _, _ in mixer.refresh() }
+        // 리스너와 별도로 1초마다 돈다. 탭을 못 만든 프로세스의 재시도(10초 간격)와
+        // 이미 끝났지만 목록에 남아 있던 프로세스가 빠지는 것을 리스너가 놓친 경우를 챙긴다.
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in mixer.refresh() }
     }
 
@@ -344,24 +393,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func toggleLogin() {
-        setLogin(SMAppService.mainApp.status != .enabled)
+        // 메뉴바 앱이라 print 가 보이지 않으므로 실패하면 알림창으로 알린다
+        if let error = setLogin(SMAppService.mainApp.status != .enabled) {
+            let alert = NSAlert()
+            alert.messageText = "로그인 항목을 바꾸지 못했다"
+            alert.informativeText = "\(error.localizedDescription)\n\n앱 폴더(app-volume.app) 안의 실행 파일로 켰을 때만 동작한다."
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 }
 
-// 로그인 항목 등록·해제. 앱 폴더 안의 실행 파일로 불러야 동작한다.
-func setLogin(_ enabled: Bool) {
+// 로그인 항목 등록·해제. 앱 폴더 안의 실행 파일로 불러야 동작한다. 실패하면 오류를 돌려준다.
+func setLogin(_ enabled: Bool) -> Error? {
     do {
         if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+        return nil
     } catch {
         print("로그인 항목 변경 실패: \(error)")
+        return error
     }
 }
 
 // 확인용: 로그인 항목을 바꾸거나 상태를 출력하고 끝낸다
 if let index = CommandLine.arguments.firstIndex(of: "--login") {
     let value = CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "status"
-    if value == "on" { setLogin(true) }
-    if value == "off" { setLogin(false) }
+    if value == "on" { _ = setLogin(true) }
+    if value == "off" { _ = setLogin(false) }
     print("로그인 항목 상태: \(SMAppService.mainApp.status.rawValue) (0 미등록, 1 등록됨, 2 승인 필요, 3 찾을 수 없음)")
     exit(0)
 }
