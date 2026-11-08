@@ -163,7 +163,8 @@ func mixTap(_ input: UnsafeMutableAudioBufferListPointer, into output: UnsafeMut
         guard let out = channel(output, number) else { continue }
         for frame in 0..<out.frames {
             let value: Float
-            if total == 1 {
+            if total == 1 || (number == leftOut && leftOut == rightOut) {
+                // 모노 장치이거나 장치 설정이 좌우를 같은 채널로 정했으면 좌우를 섞는다
                 value = (sample(left, frame) + sample(right, frame)) / 2
             } else if number == leftOut {
                 value = sample(left, frame)

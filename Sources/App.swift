@@ -53,7 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             source.setEventHandler { [weak self] in
                 guard let self = self else { return }
                 self.signalCount += 1
-                if self.signalCount >= 2 { exit(1) }
+                // 메인 스레드가 락을 쥔 채 막혀 있어도 끝나도록 정리 단계(atexit) 없이 바로 끝낸다
+                if self.signalCount >= 2 { _exit(1) }
                 DispatchQueue.main.async { NSApp.terminate(nil) }
             }
             source.resume()
