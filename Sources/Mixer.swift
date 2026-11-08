@@ -90,6 +90,18 @@ final class Mixer {
     }
 
     // 탭은 만들 때의 기본 출력 장치에 붙는다. 장치가 바뀌면 모두 부수고 새 장치로 다시 만든다.
+    // 블루투스 연결처럼 알림이 연달아 오면 0.3초 모아 한 번만 한다.
+    var restartPending = false
+
+    func restartSoon() {
+        if restartPending { return }
+        restartPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
+            restartPending = false
+            restartAll()
+        }
+    }
+
     func restartAll() {
         stopAll()
         failedAt = [:]

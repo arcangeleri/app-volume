@@ -1,9 +1,10 @@
 import AppKit
 import ServiceManagement
 
-// 메뉴바 앱 믹서: 지금 소리를 내는 프로세스를 앱 단위 슬라이더로 보여 주고,
+// 메뉴바 앱 믹서: 오디오를 연 프로세스를 앱 단위 슬라이더로 보여 주고,
 // 100% 미만으로 내리거나 음소거한 앱에만 프로세스 탭을 걸어 볼륨을 곱해 기본 출력 장치로 다시 낸다.
-// Audio.swift(Core Audio 조회) · Tap.swift(탭과 볼륨 곱하기) · Mixer.swift(상태와 탭 관리) · Menu.swift(메뉴 화면)
+// Audio.swift(Core Audio 조회) · Tap.swift(탭과 볼륨 곱하기) · Mixer.swift(상태와 탭 관리)
+// Menu.swift(메뉴의 앱 한 줄·아이콘) · App.swift(앱 수명·리스너·종료 신호·로그인 항목) · main.swift(명령 처리와 시작)
 
 let mixer = Mixer()
 

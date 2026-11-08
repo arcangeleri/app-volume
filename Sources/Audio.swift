@@ -34,7 +34,7 @@ func appKey(bundleID: String, pid: Int32) -> String {
     if id.isEmpty { return "pid-\(pid)" }
     // helper 로 시작하는 마디부터 자른다. 앞 두 마디(com.회사)는 자르지 않는다(com.helperapp.x 는 그대로)
     let parts = id.split(separator: ".", omittingEmptySubsequences: false)
-    if let index = parts.firstIndex(where: { $0.lowercased().hasPrefix("helper") }), index >= 2 {
+    if let index = parts.indices.dropFirst(2).first(where: { parts[$0].lowercased().hasPrefix("helper") }) {
         return parts[..<index].joined(separator: ".")
     }
     return id
