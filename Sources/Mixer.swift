@@ -32,28 +32,22 @@ final class Mixer {
     func setGain(_ key: String, _ value: Float) {
         gains[key] = value >= 0.98 ? 1 : value
         muted.remove(key)
-        persist()
-        retryNow(key)
-        refresh()
+        applyChange(key)
     }
 
     func setMuted(_ key: String, _ value: Bool) {
         if value { muted.insert(key) } else { muted.remove(key) }
-        persist()
-        retryNow(key)
-        refresh()
+        applyChange(key)
     }
 
-    func persist() {
+    // 사용자가 바꾼 값을 저장하고, 그 앱은 실패했어도 기다리지 않고 바로 다시 탭을 시도한다
+    func applyChange(_ key: String) {
         UserDefaults.standard.set(gains, forKey: "gains")
         UserDefaults.standard.set(Array(muted), forKey: "muted")
-    }
-
-    // 사용자가 직접 조절하면 기다리지 않고 바로 다시 시도한다
-    func retryNow(_ key: String) {
         for process in processes where process.key == key {
             failedAt[process.object] = nil
         }
+        refresh()
     }
 
     func refresh() {

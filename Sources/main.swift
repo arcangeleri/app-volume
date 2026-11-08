@@ -6,8 +6,6 @@ import ServiceManagement
 // Audio.swift(Core Audio 조회) · Tap.swift(탭과 볼륨 곱하기) · Mixer.swift(상태와 탭 관리)
 // Menu.swift(메뉴의 앱 한 줄·아이콘) · App.swift(앱 수명·리스너·종료 신호·로그인 항목) · main.swift(명령 처리와 시작)
 
-let mixer = Mixer()
-
 // 확인용: 로그인 항목을 바꾸거나 상태를 출력하고 끝낸다. 실패하면 종료 코드 1
 if let index = CommandLine.arguments.firstIndex(of: "--login") {
     let value = CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "status"
@@ -26,6 +24,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--login") {
     print("로그인 항목 상태: \(SMAppService.mainApp.status.rawValue) (0 미등록, 1 등록됨, 2 승인 필요, 3 찾을 수 없음)")
     exit(error == nil ? 0 : 1)
 }
+
+// 볼륨 상태. --login 에는 필요 없어 그 뒤에 만든다
+let mixer = Mixer()
 
 // 확인용: 목록만 출력하고 끝낸다
 if CommandLine.arguments.contains("--list") {

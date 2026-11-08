@@ -157,8 +157,9 @@ func mixTap(_ input: UnsafeMutableAudioBufferListPointer, into output: UnsafeMut
     var total = 0
     for buffer in output { total += Int(buffer.mNumberChannels) }
     // 장치가 알려 준 채널 번호가 실제 채널 수를 넘으면 1·2번으로 낸다
-    let leftOut = leftChannel < total && rightChannel < total ? leftChannel : 0
-    let rightOut = leftChannel < total && rightChannel < total ? rightChannel : 1
+    let fits = leftChannel < total && rightChannel < total
+    let leftOut = fits ? leftChannel : 0
+    let rightOut = fits ? rightChannel : 1
     for number in 0..<total {
         guard let out = channel(output, number) else { continue }
         for frame in 0..<out.frames {
