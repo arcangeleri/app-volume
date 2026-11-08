@@ -1,0 +1,152 @@
+import CoreAudio
+import Foundation
+
+// 프로세스 하나의 소리를 탭으로 잡아 원래 출력은 끄고, 볼륨을 곱해 기본 출력 장치로 다시 낸다.
+final class Tap {
+    // 메인 스레드에서 쓰고 IO 스레드에서 읽는다. 4바이트 정렬 값이라 읽다 깨지지 않는다.
+    var gain: Float
+    var tapID = AudioObjectID(kAudioObjectUnknown)
+    var aggregateID = AudioObjectID(kAudioObjectUnknown)
+    var procID: AudioDeviceIOProcID?
+
+    init?(processObject: AudioObjectID, gain: Float) {
+        self.gain = gain
+
+        let description = CATapDescription(stereoMixdownOfProcesses: [processObject])
+        description.uuid = UUID()
+        description.muteBehavior = .muted
+        // 다른 프로세스에 탭이 보이지 않게 한다
+        description.isPrivate = true
+        // 메뉴바 앱이라 print 는 보이지 않는다. 실패 원인은 NSLog 로 남겨 콘솔 앱에서 찾게 한다.
+        let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
+        guard tapStatus == noErr else {
+            NSLog("app-volume: 탭 만들기 실패 (코드 %d)", tapStatus)
+            tapID = AudioObjectID(kAudioObjectUnknown)
+            return nil
+        }
+
+        // 효과음용 장치(DefaultSystemOutputDevice)가 아니라 소리 설정의 기본 출력 장치로 낸다
+        var outputDevice = AudioObjectID(kAudioObjectUnknown)
+        var uidRef: Unmanaged<CFString>?
+        guard audioProperty(systemObject, kAudioHardwarePropertyDefaultOutputDevice, &outputDevice),
+              audioProperty(outputDevice, kAudioDevicePropertyDeviceUID, &uidRef),
+              let uid = uidRef?.takeRetainedValue() as String? else {
+            NSLog("app-volume: 출력 장치 얻기 실패")
+            stop()
+            return nil
+        }
+
+        let aggregate: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "app-volume",
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceMainSubDeviceKey: uid,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceIsStackedKey: false,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: uid]],
+            kAudioAggregateDeviceTapListKey: [[
+                kAudioSubTapDriftCompensationKey: true,
+                kAudioSubTapUIDKey: description.uuid.uuidString,
+            ]],
+        ]
+        let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID)
+        guard aggregateStatus == noErr else {
+            NSLog("app-volume: 집합 장치 만들기 실패 (코드 %d)", aggregateStatus)
+            aggregateID = AudioObjectID(kAudioObjectUnknown)
+            stop()
+            return nil
+        }
+
+        let queue = DispatchQueue(label: "app-volume.io", qos: .userInteractive)
+        let procStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue) { [unowned self] _, inData, _, outData, _ in
+            mixTap(UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inData)),
+                   into: UnsafeMutableAudioBufferListPointer(outData),
+                   gain: self.gain)
+        }
+        guard procStatus == noErr else {
+            NSLog("app-volume: 재생 함수 등록 실패 (코드 %d)", procStatus)
+            procID = nil
+            stop()
+            return nil
+        }
+        let startStatus = AudioDeviceStart(aggregateID, procID)
+        guard startStatus == noErr else {
+            NSLog("app-volume: 재생 시작 실패 (코드 %d)", startStatus)
+            stop()
+            return nil
+        }
+    }
+
+    // 정리 순서: 재생을 멈추고 재생 함수를 지운 뒤 집합 장치와 탭을 지운다. 여러 번 불러도 된다.
+    func stop() {
+        if let procID = procID {
+            AudioDeviceStop(aggregateID, procID)
+            AudioDeviceDestroyIOProcID(aggregateID, procID)
+            self.procID = nil
+        }
+        if aggregateID != kAudioObjectUnknown {
+            AudioHardwareDestroyAggregateDevice(aggregateID)
+            aggregateID = AudioObjectID(kAudioObjectUnknown)
+        }
+        if tapID != kAudioObjectUnknown {
+            AudioHardwareDestroyProcessTap(tapID)
+            tapID = AudioObjectID(kAudioObjectUnknown)
+        }
+    }
+
+    // 재생 함수가 [unowned self] 라 해제 전에 반드시 멈춘다
+    deinit { stop() }
+}
+
+// 버퍼 목록 안의 채널 하나: 첫 샘플 위치, 다음 프레임까지의 간격(그 버퍼의 채널 수), 프레임 수
+struct Channel {
+    let samples: UnsafeMutablePointer<Float>
+    let stride: Int
+    let frames: Int
+}
+
+// 버퍼 목록에서 number 번째 채널을 찾는다. 인터리브 한 버퍼든 채널마다 한 버퍼든 같은 번호로 센다.
+func channel(_ list: UnsafeMutableAudioBufferListPointer, _ number: Int) -> Channel? {
+    var first = 0
+    for buffer in list {
+        let count = Int(buffer.mNumberChannels)
+        if number < first + count {
+            guard let data = buffer.mData else { return nil }
+            return Channel(samples: data.assumingMemoryBound(to: Float.self) + (number - first),
+                           stride: count,
+                           frames: Int(buffer.mDataByteSize) / (MemoryLayout<Float>.size * count))
+        }
+        first += count
+    }
+    return nil
+}
+
+func sample(_ channel: Channel?, _ frame: Int) -> Float {
+    guard let channel = channel, frame < channel.frames else { return 0 }
+    return channel.samples[frame * channel.stride]
+}
+
+// 탭(입력 첫 두 채널, 스테레오)을 출력 장치 채널에 번호끼리 짝지어 볼륨을 곱해 옮긴다.
+// 출력이 4·8채널이면 셋째 채널부터 0, 모노면 좌우를 섞는다. IO 스레드에서 돌므로 메모리를 잡지 않는다.
+func mixTap(_ input: UnsafeMutableAudioBufferListPointer, into output: UnsafeMutableAudioBufferListPointer, gain: Float) {
+    let left = channel(input, 0)
+    let right = channel(input, 1)
+    var total = 0
+    for buffer in output { total += Int(buffer.mNumberChannels) }
+    for number in 0..<total {
+        guard let out = channel(output, number) else { continue }
+        for frame in 0..<out.frames {
+            let value: Float
+            if total == 1 {
+                value = (sample(left, frame) + sample(right, frame)) / 2
+            } else if number == 0 {
+                value = sample(left, frame)
+            } else if number == 1 {
+                value = sample(right, frame)
+            } else {
+                value = 0
+            }
+            out.samples[frame * out.stride] = value * gain
+        }
+    }
+}
